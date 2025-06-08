@@ -2,6 +2,7 @@ import asyncio
 import uvicorn
 from typing import Annotated
 from pathlib import Path
+from contextlib import asynccontextmanager
 import uuid
 import json
 import os
@@ -19,8 +20,15 @@ from fastapi_webpush_endpoint import (
 
 # Flag to indicate that notification endpoint received a notification
 notification_received = asyncio.Event()
+# Flag to indicate FastAPI is ready to handle requests
+fastapi_ready = asyncio.Event()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    fastapi_ready.set()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 #
 # Notification endpoint
@@ -121,6 +129,7 @@ async def main():
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
+    await fastapi_ready.wait()
 
     # Subscribe to web app and trigger notification
     async with httpx.AsyncClient() as client:
