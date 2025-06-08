@@ -35,6 +35,7 @@ development = [
     "uvicorn",
     "webpush",
     "pywebpush",
+    "httpx",
     "build",
     "flake8",
     "pyright",
