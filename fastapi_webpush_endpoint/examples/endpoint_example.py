@@ -21,7 +21,7 @@ NotificationProtocolResponseType = Annotated[
 app = FastAPI()
 
 
-@app.post("/notification-endpoint/", tags=["Notification Backend"])
+@app.post("/notification-endpoint/")
 async def receive_notification(
         message: NotificationProtocolResponseType):
     if isinstance(message, WebPushProtocolResponse):

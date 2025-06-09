@@ -11,9 +11,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 
-from fastapi import FastAPI, Response, Depends
-from pydantic import BaseModel, AnyHttpUrl
-from fastapi import Request, Response, Header
+from fastapi import FastAPI, Request, Response, Depends, Header
+from pydantic import BaseModel, AnyHttpUrl, NonNegativeInt
 import jwt
 import http_ece
 import uvicorn
@@ -83,9 +82,9 @@ class WebPushNotification(BaseModel):
     requireInteraction: Optional[bool] = None
     silent: Optional[bool] = None
     tag: Optional[str] = None
-    timestamp: Optional[int] = None
+    timestamp: Optional[NonNegativeInt] = None
     title: Optional[str] = None
-    vibrate: Optional[list[int]] = None
+    vibrate: Optional[list[NonNegativeInt]] = None
 
     def model_dump(self, *args, **kwargs):
         kwargs.pop('exclude_none', None)
@@ -96,7 +95,7 @@ class WebPushProtocolResponse(BaseModel):
     """
     https://web.dev/articles/push-notifications-web-push-protocol#more_headers
     """
-    ttl: int
+    ttl: NonNegativeInt
     topic: Optional[str]
     urgency: Optional[Literal["very-low", "low", "normal", "high"]]
     notification: BaseModel | str
@@ -108,24 +107,41 @@ class WebPushProtocolResponse(BaseModel):
 class NotificationEndpoint:
     def __init__(
             self,
-            endpoint: AnyHttpUrl | str,
+            endpoint_url: AnyHttpUrl | str,
             auth_secret: Optional[bytes] = None,
             max_message_size: int = 4096,
             notification_content_class: Optional[type[BaseModel]] = None,
             include_port_in_aud: bool = True):
+        """
+        Web Push Endpoint which can receive Web Push messages.
+
+        > notification_endpoint = NotificationEndpoint(
+        >     "http://127.0.0.1:5000/notification-endpoint/"
+        > )
+        > NotificationProtocolResponseType = Annotated[
+        >     WebPushProtocolResponse | WebPushProtocolException,
+        >     Depends(notification_endpoint)
+        > ]
+        >
+        > app = FastAPI()
+        > @app.post("/notification-endpoint/")
+        > async def receive_notification(message: NotificationProtocolResponseType):
+        >     # Handle 'message'
+        >     return message.as_response()
+        """
         # Check init parameters
         if max_message_size < 4096:
             raise ValueError(
-                "A notification service must support a message size of at least 4096 bytes."
+                "A notification endpoint must support a message size of at least 4096 bytes."
                 "https://datatracker.ietf.org/doc/html/draft-ietf-webpush-protocol-10#section-7.2"
             )
         self.max_message_size = max_message_size
-        self.endpoint = endpoint if isinstance(endpoint, AnyHttpUrl) else AnyHttpUrl(endpoint)
-        if not self.endpoint.scheme:
+        self.endpoint_url = endpoint_url if isinstance(endpoint_url, AnyHttpUrl) else AnyHttpUrl(endpoint_url)
+        if not self.endpoint_url.scheme:
             raise ValueError("endpoint must include url scheme.")
-        self.aud = f"{self.endpoint.scheme}://{self.endpoint.host}:{self.endpoint.port}" \
+        self.aud = f"{self.endpoint_url.scheme}://{self.endpoint_url.host}:{self.endpoint_url.port}" \
                    if include_port_in_aud else \
-                   f"{self.endpoint.scheme}://{self.endpoint.host}"
+                   f"{self.endpoint_url.scheme}://{self.endpoint_url.host}"
         if auth_secret is not None and len(auth_secret) != 16:
             raise ValueError("auth_secret must be 16 bytes long.")
         self.auth_secret = auth_secret or os.urandom(16)  # Secret bytes
@@ -273,7 +289,7 @@ class NotificationEndpoint:
         )
         # Create subscription object
         return WebPushSubscription(
-            endpoint=self.endpoint,
+            endpoint=self.endpoint_url,
             keys=WebPushKeys(
                 auth=base64.urlsafe_b64encode(self.auth_secret).decode("utf-8"),
                 p256dh=base64.urlsafe_b64encode(dh).decode("utf-8"),
@@ -285,7 +301,7 @@ async def wait_until_server_ready(
         url: Optional[AnyHttpUrl | str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        timeout: float=2.0):
+        timeout: float = 2.0):
     """
     Convenience function to wait until 'port' on 'host' is
     available to service connections.
@@ -317,12 +333,14 @@ async def wait_until_server_ready(
                 pass
     await asyncio.wait_for(wait_forever_until_server_ready(), timeout=timeout)
 
+
 class CaptureNotFinished(Exception):
     """
     Exception raised upon access to CaptureNotifications.captured_notifications
     while context manager is not finalized.
     """
     pass
+
 
 class CapturedNotifications:
     """
@@ -353,7 +371,7 @@ class CapturedNotifications:
             raise CaptureNotFinished("Notifications cannot be accessed inside the scope of 'async with'")
         assert self._notifications is not None
         return self._notifications
-    
+
     @property
     def subscription_response(self) -> httpx.Response:
         assert self._subscription_response is not None
@@ -361,6 +379,22 @@ class CapturedNotifications:
 
 
 class CaptureNotifications:
+    """
+    Context manager capturing Web Push notifications
+    emitted from web app which receives Web Push
+    subscription at 'subscription_url'.
+
+    Arguments to NotificationEndpoint can be supplied:
+    'auth_secret', 'notification_content_class' and
+    'include_port_in_aud'.
+
+    If a FastAPI object is supplied via 'fastapi_app'
+    then it is launched by the context manager. Otherwise
+    it is assumed to have been launched elsewhere.
+
+    Potential key word arguments to the httpx.request
+    call to the 'subscription_url' can also be supplied.
+    """
     def __init__(self,
                  subscription_url: str | AnyHttpUrl,
                  auth_secret: Optional[bytes] = None,
@@ -369,7 +403,7 @@ class CaptureNotifications:
                  include_port_in_aud: bool = False,
                  fastapi_app: Optional[FastAPI] = None,
                  **httpx_subscription_parameters):
-        
+
         # Create instance variables
         self.notifications: list[WebPushProtocolResponse | WebPushProtocolException] = []
         self.app_server: Optional[uvicorn.Server] = None
@@ -388,7 +422,7 @@ class CaptureNotifications:
             raise ValueError("Url should be specified via 'subscription_url' parameter.")
         if any(key.lower() == "content" for key in httpx_subscription_parameters.keys()):
             raise ValueError("Content cannot be specified. It is provided by the notification endpoint.")
-        
+
         # Initialize fastapi_app server if fastapi_app is provided
         if fastapi_app is not None:
             self.app_server = self.setup_uvicorn(
@@ -400,14 +434,14 @@ class CaptureNotifications:
         # Set up endpoint on a different port to avoid
         # url collisions
         endpoint_url = AnyHttpUrl.build(
-            scheme = subscription_url.scheme,
+            scheme=subscription_url.scheme,
             host=subscription_url.host,
             port=subscription_url.port+1,
             path="/notification-endpoint/",
         )
-        
+
         self.notification_endpoint = NotificationEndpoint(
-            str(endpoint_url),  # URL of endpoint handling Web Push notifications
+            str(endpoint_url),
             auth_secret=auth_secret,
             max_message_size=max_message_size,
             notification_content_class=notification_content_class,
@@ -437,10 +471,10 @@ class CaptureNotifications:
 
         @app.post(endpoint_url.path)
         async def receive_notification(
-                message: NotificationProtocolResponseType): # type: ignore
+                message: NotificationProtocolResponseType):  # type: ignore
             self.notifications.append(message)
             return message.as_response()
-        
+
         return app
 
     def setup_uvicorn(self, app, host, port):
@@ -453,23 +487,24 @@ class CaptureNotifications:
 
     async def __aenter__(self):
         # Start Uvicorn servers
-        self._webpush_server_task = asyncio.create_task(self.webpush_server.serve())
+        self._endpoint_task = asyncio.create_task(self.webpush_server.serve())
         await wait_until_server_ready(url=self.webpush_endpoint_url)
         if self.app_server:
-            self._app_server_task = asyncio.create_task(self.app_server.serve())
+            self._app_task = asyncio.create_task(self.app_server.serve())
             await wait_until_server_ready(url=self.subscription_url)
 
         # Subscribe to notifications from web app via provided subscription_url
         async with httpx.AsyncClient() as client:
+            method = self.httpx_subscription_parameters.pop("method", "POST")
             response = await client.request(
-                method=self.httpx_subscription_parameters.pop("method", "POST"),
+                method=method,
                 url=str(self.subscription_url),
                 content=self.notification_endpoint.subscription,
                 **self.httpx_subscription_parameters,
             )
             self.captured_notifications.set_subscription_response(response)
         return self.captured_notifications
-    
+
     async def __aexit__(self, exception, value, traceback):
         # Stop Uvicorn servers
         if self.app_server:

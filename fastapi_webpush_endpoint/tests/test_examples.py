@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 
 from fastapi_webpush_endpoint.examples import (
     webpush_example,
@@ -7,6 +8,9 @@ from fastapi_webpush_endpoint.examples import (
 
 
 class TestExamples(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        asyncio.get_running_loop().slow_callback_duration = 0.5
+
     async def test_webpush(self):
         with self.assertLogs("httpx", level="INFO") as logger:
             await webpush_example.main()
@@ -14,6 +18,9 @@ class TestExamples(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPyWebpush(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        asyncio.get_running_loop().slow_callback_duration = 0.5
+
     async def test_pywebpush(self):
         with self.assertLogs("urllib3", level="DEBUG") as logger:
             await pywebpush_example.main()

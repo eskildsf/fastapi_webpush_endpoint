@@ -1,3 +1,5 @@
+import asyncio
+import uvicorn
 from typing import Annotated
 from pathlib import Path
 import uuid
@@ -5,14 +7,11 @@ import json
 import os
 
 import httpx
-from fastapi import FastAPI, Response, BackgroundTasks, Cookie, Depends
+from fastapi import FastAPI, Response, BackgroundTasks, Cookie
 from webpush import WebPush, WebPushSubscription
 
-#
-# Web app
-#
 app = FastAPI()
-key_directory = os.path.join(os.path.dirname(os.path.dirname(__file__)), "examples")
+key_directory = os.path.dirname(__file__)
 wp = WebPush(
     private_key=Path(os.path.join(key_directory, "private_key.pem")),
     public_key=Path(os.path.join(key_directory, "public_key.pem")),
@@ -21,6 +20,7 @@ wp = WebPush(
 )
 # Map session ID to Web Push Subscription
 subscriptions: dict[str, WebPushSubscription] = {}
+
 
 @app.post("/web-app/subscribe", tags=["Web App Backend"])
 async def subscribe_user(
@@ -65,3 +65,16 @@ async def notify(
         headers=message.headers,  # type: ignore
     )
     return {"status": "Notification OK"}
+
+
+async def main():
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=5000,
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+if __name__ == "__main__":
+    asyncio.run(main())

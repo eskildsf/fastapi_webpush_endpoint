@@ -105,6 +105,7 @@ async def notify(
     )
     return {"status": "Notification OK"}
 
+
 async def main():
     """
     Start FastAPI providing both web app and notification endpoint.
@@ -129,7 +130,7 @@ async def main():
         await client.post(
             "http://127.0.0.1:5000/web-app/subscribe",
             content=notification_endpoint.subscription,
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
         )
         # Trigger notification from web app
         await client.get(
