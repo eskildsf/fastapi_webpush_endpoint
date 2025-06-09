@@ -1,7 +1,6 @@
 import asyncio
 import uvicorn
 from typing import Annotated
-from contextlib import asynccontextmanager
 import uuid
 import json
 import os
@@ -20,15 +19,8 @@ from fastapi_webpush_endpoint import (
 
 # Flag to indicate that notification endpoint received a notification
 notification_received = asyncio.Event()
-# Flag to indicate FastAPI is ready to handle requests
-fastapi_ready = asyncio.Event()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    fastapi_ready.set()
-    yield
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 #
 # Notification endpoint
@@ -109,6 +101,15 @@ async def notify(
     return {"status": "Notification OK"}
 
 
+async def fastapi_ready(url):
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.get(url)
+            return
+        except aiohttp.ClientConnectionError:
+            pass
+
 async def main():
     """
     Start FastAPI providing both web app and notification endpoint.
@@ -125,7 +126,7 @@ async def main():
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
-    await fastapi_ready.wait()
+    await fastapi_ready("http://127.0.0.1:5000")
 
     # Create unsafe cookie jar because requests are made to ip address
     cookie_jar = aiohttp.CookieJar(unsafe=True)

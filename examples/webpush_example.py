@@ -2,7 +2,6 @@ import asyncio
 import uvicorn
 from typing import Annotated
 from pathlib import Path
-from contextlib import asynccontextmanager
 import uuid
 import json
 import os
@@ -105,6 +104,14 @@ async def notify(
     )
     return {"status": "Notification OK"}
 
+async def fastapi_ready(url):
+    while True:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get(url)
+            return
+        except httpx.ConnectError as ex:
+            pass
 
 async def main():
     """
@@ -122,6 +129,7 @@ async def main():
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
+    await fastapi_ready("http://127.0.0.1:5000")
 
     # Subscribe to web app and trigger notification
     async with httpx.AsyncClient() as client:
