@@ -1,0 +1,54 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "fastapi_webpush_endpoint"
+authors = [
+  {name = "Eskild Schroll-Fleischer", email = "eskildsf@gmail.com"},
+]
+dynamic = ["version", "description"]
+readme = "README.md"
+requires-python = ">= 3.10"
+
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "pyjwt",
+    "http_ece",
+]
+
+keywords = ["webhook", "webpush", "fastapi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: English",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+development = [
+    "uvicorn",
+    "webpush",
+    "pywebpush",
+    "httpx",
+    "build",
+    "flake8",
+    "pyright",
+]
+
+[project.urls]
+Documentation = "https://github.com/eskildsf/fastapi_webpush_endpoint/blob/main/README.md"
+Repository = "https://github.com/eskildsf/fastapi_webpush_endpoint"
+GitHub = "https://github.com/eskildsf/fastapi_webpush_endpoint"
+Issues = "https://github.com/eskildsf/fastapi_webpush_endpoint/issues"
+
+[tool.pyright]
+include = ["fastapi_webpush_endpoint"]
+exclude = [
+    "**/__pycache__",
+]
