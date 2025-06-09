@@ -20,15 +20,8 @@ from fastapi_webpush_endpoint import (
 
 # Flag to indicate that notification endpoint received a notification
 notification_received = asyncio.Event()
-# Flag to indicate FastAPI is ready to handle requests
-fastapi_ready = asyncio.Event()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    fastapi_ready.set()
-    yield
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 #
 # Notification endpoint
@@ -129,16 +122,21 @@ async def main():
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
-    await fastapi_ready.wait()
 
     # Subscribe to web app and trigger notification
     async with httpx.AsyncClient() as client:
-        # Subscribe to notifications from web app
-        await client.post(
-            "http://127.0.0.1:5000/web-app/subscribe",
-            content=notification_endpoint.subscription,
-            headers={"Content-Type": "application/json"}
-        )
+        # Try until successful
+        while True:
+            try:
+                # Subscribe to notifications from web app
+                await client.post(
+                    "http://127.0.0.1:5000/web-app/subscribe",
+                    content=notification_endpoint.subscription,
+                    headers={"Content-Type": "application/json"}
+                )
+                break
+            except httpx.ConnectError:
+                pass
         # Trigger notification from web app
         await client.get(
             "http://127.0.0.1:5000/web-app/notify",
