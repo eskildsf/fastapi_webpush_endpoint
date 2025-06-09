@@ -9,6 +9,8 @@ class TestExamples(unittest.IsolatedAsyncioTestCase):
             await webpush_example.main()
             self.assertIn('POST http://127.0.0.1:5000/notification-endpoint/ "HTTP/1.1 201 Created"', logger.records[-1].message)
 
+
+class TestPyWebpush(unittest.IsolatedAsyncioTestCase):
     async def test_pywebpush(self):
         with self.assertLogs("urllib3", level="DEBUG") as logger:
             await pywebpush_example.main()
