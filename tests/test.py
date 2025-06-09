@@ -1,18 +1,17 @@
 import unittest
-import asyncio
 
 from examples import webpush_example, pywebpush_example
 
 
 class TestExamples(unittest.IsolatedAsyncioTestCase):
-    def test_webpush(self):
+    async def test_webpush(self):
         with self.assertLogs("httpx", level="INFO") as logger:
-            asyncio.run(webpush_example.main())
+            await webpush_example.main()
             self.assertIn('POST http://127.0.0.1:5000/notification-endpoint/ "HTTP/1.1 201 Created"', logger.records[-1].message)
 
-    def test_pywebpush(self):
+    async def test_pywebpush(self):
         with self.assertLogs("urllib3", level="DEBUG") as logger:
-            asyncio.run(pywebpush_example.main())
+            await pywebpush_example.main()
             self.assertIn('"POST /notification-endpoint/ HTTP/1.1" 201', logger.records[-1].message)
 
 
