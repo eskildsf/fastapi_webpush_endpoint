@@ -1,6 +1,9 @@
 import unittest
 
-from examples import webpush_example, pywebpush_example
+from fastapi_webpush_endpoint.examples import (
+    webpush_example,
+    pywebpush_example,
+)
 
 
 class TestExamples(unittest.IsolatedAsyncioTestCase):

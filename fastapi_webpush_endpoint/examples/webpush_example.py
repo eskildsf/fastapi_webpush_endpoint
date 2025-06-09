@@ -15,6 +15,7 @@ from fastapi_webpush_endpoint import (
     WebPushProtocolResponse,
     WebPushProtocolException,
     WebPushNotification,
+    wait_until_server_ready,
 )
 
 # Flag to indicate that notification endpoint received a notification
@@ -104,15 +105,6 @@ async def notify(
     )
     return {"status": "Notification OK"}
 
-async def fastapi_ready(url):
-    while True:
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.get(url)
-            return
-        except httpx.ConnectError as ex:
-            pass
-
 async def main():
     """
     Start FastAPI providing both web app and notification endpoint.
@@ -129,7 +121,7 @@ async def main():
     )
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
-    await fastapi_ready("http://127.0.0.1:5000")
+    await wait_until_server_ready(url="http://127.0.0.1:5000")
 
     # Subscribe to web app and trigger notification
     async with httpx.AsyncClient() as client:

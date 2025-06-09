@@ -1,6 +1,7 @@
 "Subscribe to Web Push notifications and receive them in FastAPI."
 __version__ = "0.0.1"
 
+import asyncio
 from typing import Literal, Annotated, Optional
 import re
 import base64
@@ -10,10 +11,13 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 
+from fastapi import FastAPI, Response, Depends
 from pydantic import BaseModel, AnyHttpUrl
 from fastapi import Request, Response, Header
 import jwt
 import http_ece
+import uvicorn
+import httpx
 
 
 class WebPushKeys(BaseModel):
@@ -44,7 +48,7 @@ class NotificationStatusCodes(IntEnum):
 
 class WebPushProtocolException(Exception):
     """
-    Class to hold error which may arise when decoding and decrypting message.
+    Class to hold exception which may arise when decoding and decrypting WebPush message.
     """
     def __init__(self, message: str, status_code: NotificationStatusCodes):
         self.message = message
@@ -275,3 +279,201 @@ class NotificationEndpoint:
                 p256dh=base64.urlsafe_b64encode(dh).decode("utf-8"),
             )
         ).model_dump_json()
+
+
+async def wait_until_server_ready(
+        url: Optional[AnyHttpUrl | str] = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        timeout: float=2.0):
+    """
+    Convenience function to wait until 'port' on 'host' is
+    available to service connections.
+    """
+    if url is not None:
+        assert host is None and port is None, ValueError("'host' and 'port' cannot be provided when 'url' is providede.")
+        if isinstance(url, str):
+            url = AnyHttpUrl(url)
+        assert url.host, ValueError("'url' does not contain a host")
+        host = url.host
+        port = url.port
+    else:
+        assert host is not None and port is not None, ValueError("'host' and 'port' must be provided when 'url' is not providede.")
+
+    async def wait_forever_until_server_ready():
+        while True:
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host,
+                        port,
+                    ),
+                    timeout=0.1,
+                )
+                writer.close()
+                await writer.wait_closed()
+                return
+            except (ConnectionError, asyncio.TimeoutError):
+                pass
+    await asyncio.wait_for(wait_forever_until_server_ready(), timeout=timeout)
+
+class CaptureNotFinished(Exception):
+    """
+    Exception raised upon access to CaptureNotifications.captured_notifications
+    while context manager is not finalized.
+    """
+    pass
+
+class CapturedNotifications:
+    """
+    Object to hold response to subscription request
+    and list of Web Push notifications received by the
+    NotificationEndpoint.
+
+    The list of notifications is incomplete until finalization
+    of the NotificationEndpoint server is finished.
+    """
+    def __init__(self):
+        self._subscription_response = None
+        self._notifications = None
+        self._context_manager_exited = False
+
+    def set_notifications(self, notifications: list[WebPushProtocolResponse | WebPushProtocolException]):
+        assert self._notifications is None, ValueError("CaptureNotifications appears to have been reused.")
+        self._context_manager_exited = True
+        self._notifications = notifications
+
+    def set_subscription_response(self, subscription_response: httpx.Response):
+        assert self._subscription_response is None, ValueError("CaptureNotifications appears to have been reused.")
+        self._subscription_response = subscription_response
+
+    @property
+    def notifications(self) -> list[WebPushProtocolResponse | WebPushProtocolException]:
+        if not self._context_manager_exited:
+            raise CaptureNotFinished("Notifications cannot be accessed inside the scope of 'async with'")
+        assert self._notifications is not None
+        return self._notifications
+    
+    @property
+    def subscription_response(self) -> httpx.Response:
+        assert self._subscription_response is not None
+        return self._subscription_response
+
+
+class CaptureNotifications:
+    def __init__(self,
+                 subscription_url: str | AnyHttpUrl,
+                 auth_secret: Optional[bytes] = None,
+                 max_message_size: int = 4096,
+                 notification_content_class: Optional[type[BaseModel]] = None,
+                 include_port_in_aud: bool = False,
+                 fastapi_app: Optional[FastAPI] = None,
+                 **httpx_subscription_parameters):
+        
+        # Create instance variables
+        self.notifications: list[WebPushProtocolResponse | WebPushProtocolException] = []
+        self.app_server: Optional[uvicorn.Server] = None
+        self.httpx_subscription_parameters = httpx_subscription_parameters
+        self.captured_notifications = CapturedNotifications()
+
+        # Subscription url must specify host and port
+        if isinstance(subscription_url, str):
+            subscription_url = AnyHttpUrl(subscription_url)
+        assert subscription_url.host is not None
+        assert subscription_url.port is not None
+        assert subscription_url.scheme.lower() == "http"
+
+        # httpx_subscription_parameters cannot specify url or content
+        if any(key.lower() == "url" for key in httpx_subscription_parameters.keys()):
+            raise ValueError("Url should be specified via 'subscription_url' parameter.")
+        if any(key.lower() == "content" for key in httpx_subscription_parameters.keys()):
+            raise ValueError("Content cannot be specified. It is provided by the notification endpoint.")
+        
+        # Initialize fastapi_app server if fastapi_app is provided
+        if fastapi_app is not None:
+            self.app_server = self.setup_uvicorn(
+                fastapi_app,
+                host=subscription_url.host,
+                port=subscription_url.port,
+            )
+
+        # Set up endpoint on a different port to avoid
+        # url collisions
+        endpoint_url = AnyHttpUrl.build(
+            scheme = subscription_url.scheme,
+            host=subscription_url.host,
+            port=subscription_url.port+1,
+            path="/notification-endpoint/",
+        )
+        
+        self.notification_endpoint = NotificationEndpoint(
+            str(endpoint_url),  # URL of endpoint handling Web Push notifications
+            auth_secret=auth_secret,
+            max_message_size=max_message_size,
+            notification_content_class=notification_content_class,
+            include_port_in_aud=include_port_in_aud,
+        )
+
+        # Set up webpush app and server
+        webpush_app = self.setup_webpush_endpoint_fastapi(endpoint_url)
+        self.webpush_server = self.setup_uvicorn(
+            webpush_app,
+            host=endpoint_url.host,
+            port=endpoint_url.port
+        )
+
+        # Save urls for later
+        self.subscription_url = subscription_url
+        self.webpush_endpoint_url = endpoint_url
+
+    def setup_webpush_endpoint_fastapi(self, endpoint_url: AnyHttpUrl):
+        assert endpoint_url.path
+        # Set up notification endpoint
+        app = FastAPI()
+        NotificationProtocolResponseType = Annotated[
+            WebPushProtocolResponse | WebPushProtocolException,
+            Depends(self.notification_endpoint)
+        ]
+
+        @app.post(endpoint_url.path)
+        async def receive_notification(
+                message: NotificationProtocolResponseType): # type: ignore
+            self.notifications.append(message)
+            return message.as_response()
+        
+        return app
+
+    def setup_uvicorn(self, app, host, port):
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+        )
+        return uvicorn.Server(config)
+
+    async def __aenter__(self):
+        # Start Uvicorn servers
+        self._webpush_server_task = asyncio.create_task(self.webpush_server.serve())
+        await wait_until_server_ready(url=self.webpush_endpoint_url)
+        if self.app_server:
+            self._app_server_task = asyncio.create_task(self.app_server.serve())
+            await wait_until_server_ready(url=self.subscription_url)
+
+        # Subscribe to notifications from web app via provided subscription_url
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                method=self.httpx_subscription_parameters.pop("method", "POST"),
+                url=str(self.subscription_url),
+                content=self.notification_endpoint.subscription,
+                **self.httpx_subscription_parameters,
+            )
+            self.captured_notifications.set_subscription_response(response)
+        return self.captured_notifications
+    
+    async def __aexit__(self, exception, value, traceback):
+        # Stop Uvicorn servers
+        if self.app_server:
+            await self.app_server.shutdown()
+        await self.webpush_server.shutdown()
+        # Finalize captured_notifications
+        self.captured_notifications.set_notifications(self.notifications)
