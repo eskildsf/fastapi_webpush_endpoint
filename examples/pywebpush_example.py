@@ -131,18 +131,12 @@ async def main():
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     # Subscribe to web app and trigger notification
     async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
-        # Try until successful
-        while True:
-            try:
-                # Subscribe to notifications from web app
-                await session.post(
-                    "http://127.0.0.1:5000/web-app/subscribe",
-                    data=notification_endpoint.subscription,
-                    headers={"Content-Type": "application/json"}
-                )
-                break
-            except aiohttp.ClientConnectionError:
-                pass
+        # Subscribe to notifications from web app
+        await session.post(
+            "http://127.0.0.1:5000/web-app/subscribe",
+            data=notification_endpoint.subscription,
+            headers={"Content-Type": "application/json"}
+        )
         # Trigger notification from web app
         await session.get(
             "http://127.0.0.1:5000/web-app/notify",

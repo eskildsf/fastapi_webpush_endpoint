@@ -125,18 +125,12 @@ async def main():
 
     # Subscribe to web app and trigger notification
     async with httpx.AsyncClient() as client:
-        # Try until successful
-        while True:
-            try:
-                # Subscribe to notifications from web app
-                await client.post(
-                    "http://127.0.0.1:5000/web-app/subscribe",
-                    content=notification_endpoint.subscription,
-                    headers={"Content-Type": "application/json"}
-                )
-                break
-            except httpx.ConnectError:
-                pass
+        # Subscribe to notifications from web app
+        await client.post(
+            "http://127.0.0.1:5000/web-app/subscribe",
+            content=notification_endpoint.subscription,
+            headers={"Content-Type": "application/json"}
+        )
         # Trigger notification from web app
         await client.get(
             "http://127.0.0.1:5000/web-app/notify",
